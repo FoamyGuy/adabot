@@ -11,18 +11,24 @@ import datetime
 import inspect
 import json
 import logging
+import os
 import re
 import sys
+
+import pytz
 
 from adabot.lib import common_funcs
 from adabot.lib import circuitpython_library_validators as cpy_vals
 from adabot import github_requests as gh_reqs
 from adabot import pypi_requests as pypi
+import github as pygithub
+
 
 logger = logging.getLogger(__name__)
 ch = logging.StreamHandler(stream=sys.stdout)
 logging.basicConfig(level=logging.DEBUG, format="%(message)s", handlers=[ch])
 
+GH_INTERFACE = pygithub.Github(os.environ.get("ADABOT_GITHUB_ACCESS_TOKEN"))
 
 DO_NOT_VALIDATE = [
     "CircuitPython_Community_Bundle",
@@ -65,26 +71,36 @@ def get_open_issues_and_prs(repo):
     open_issues = []
     open_pull_requests = []
     params = {"state": "open"}
-    result = gh_reqs.get("/repos/adafruit/" + repo["name"] + "/issues", params=params)
-    if not result.ok:
+    #result = gh_reqs.get("/repos/adafruit/" + repo["name"] + "/issues", params=params)
+    try:
+        issues_resp = repo.get_issues(state="open")
+    except pygithub.GithubException:
         return [], []
 
-    issues = result.json()
-    for issue in issues:
-        created = datetime.datetime.strptime(issue["created_at"], "%Y-%m-%dT%H:%M:%SZ")
-        days_open = datetime.datetime.today() - created
+    for i, issue in enumerate(issues_resp):
+        print(f"issue: {issue}")
+        print(f"dir(issue): {dir(issue)}")
+        print(f"pr: {issue.pull_request}")
+        print(f"dir(issue.pr): {dir(issue.pull_request)}")
+        #created = datetime.datetime.strptime(issue.created_at, "%Y-%m-%dT%H:%M:%SZ")
+        created = issue.created_at
+        print("created: ", created)
+        print("today: ", datetime.datetime.now(pytz.timezone("UTC")))
+        days_open = datetime.datetime.now(pytz.timezone("UTC")) - created
+
         if days_open.days < 0:  # opened earlier today
             days_open += datetime.timedelta(days=(days_open.days * -1))
 
-        issue_title = "{0} (Open {1} days)".format(issue["title"], days_open.days)
+        issue_title = "{0} (Open {1} days)".format(issue.title, days_open.days)
         if "pull_request" not in issue:  # ignore pull requests
             issue_labels = ["None"]
-            if len(issue["labels"]) != 0:
-                issue_labels = [label["name"] for label in issue["labels"]]
+            existing_labels = issue.get_labels()
+            if len(existing_labels) != 0:
+                issue_labels = [label.name for label in existing_labels]
 
             issue_dict = {
                 "title": issue_title,
-                "url": issue["html_url"],
+                "url": issue.html_url,
                 "labels": issue_labels,
             }
 
@@ -195,20 +211,20 @@ def main(
         keep_repos=keep_repos,
     )
 
-    for repo in repos:
+    for i, repo in enumerate(repos):
         if (
-            repo["name"] in cpy_vals.BUNDLE_IGNORE_LIST
-            or repo["name"] == "circuitpython"
+            repo.name in cpy_vals.BUNDLE_IGNORE_LIST
+            or repo.name == "circuitpython"
         ):
             continue
-        repo_name = repo["name"]
+        repo_name = repo.name
 
         # get a list of new & updated libraries for the last week
         check_releases = common_funcs.is_new_or_updated(repo)
         if check_releases == "new":
-            new_libs[repo_name] = repo["html_url"]
+            new_libs[repo_name] = repo.html_url
         elif check_releases == "updated":
-            updated_libs[repo_name] = repo["html_url"]
+            updated_libs[repo_name] = repo.html_url
 
         # get a list of open issues and pull requests
         check_issues, check_prs = get_open_issues_and_prs(repo)
@@ -244,12 +260,14 @@ def main(
                     validator.output_file_data.clear()
                 if error not in repos_by_error:
                     repos_by_error[error] = []
-                repos_by_error[error].append(repo["html_url"])
+                repos_by_error[error].append(repo.html_url)
             else:
                 if error[0] not in repos_by_error:
                     repos_by_error[error[0]] = []
-                repos_by_error[error[0]].append(f"{repo['html_url']} ({error[1]} days)")
+                repos_by_error[error[0]].append(f"{repo.html_url} ({error[1]} days)")
 
+        if i > 0:
+            break
     # assemble the JSON data
     build_json = {
         "updated_at": run_time.strftime("%Y-%m-%dT%H:%M:%SZ"),

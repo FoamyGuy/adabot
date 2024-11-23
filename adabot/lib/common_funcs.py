@@ -12,11 +12,15 @@ import datetime
 import os
 import re
 import requests
+from github import GithubException
+
 from adabot import github_requests as gh_reqs, REQUESTS_TIMEOUT
 from adabot import pypi_requests as pypi
+import github as pygithub
 
 CORE_REPO_URL = "/repos/adafruit/circuitpython"
 
+GH_INTERFACE = pygithub.Github(os.environ.get("ADABOT_GITHUB_ACCESS_TOKEN"))
 
 def parse_gitmodules(input_text):
     # pylint: disable=anomalous-backslash-in-string
@@ -98,6 +102,7 @@ def get_bundle_submodules():
         "https://raw.githubusercontent.com/adafruit/Adafruit_CircuitPython_Bundle/main/.gitmodules",
         timeout=REQUESTS_TIMEOUT,
     )
+    print(f"get_bundle_submodules result headers: {result.headers}")
     if result.status_code != 200:
         # output_handler("Failed to access bundle .gitmodules file from GitHub!", quiet=True)
         raise RuntimeError("Failed to access bundle .gitmodules file from GitHub!")
@@ -164,40 +169,60 @@ def list_repos(*, include_repos=None):
     :param: tuple,list include_repos: A tuple or list of repositories to ensure
                                       are included.
     """
+    req_count = 0
     repos = []
-    result = gh_reqs.get(
-        "/search/repositories",
-        params={
-            "q": "Adafruit_CircuitPython user:adafruit archived:false fork:true",
-            "per_page": 100,
-            "sort": "updated",
-            "order": "asc",
-        },
-    )
+    # result = gh_reqs.get(
+    #     "/search/repositories",
+    #     params={
+    #         "q": "Adafruit_CircuitPython user:adafruit archived:false fork:true",
+    #         "per_page": 100,
+    #         "sort": "updated",
+    #         "order": "asc",
+    #     },
+    # )
+    searched_repos = GH_INTERFACE.search_repositories(query="Adafruit_CircuitPython user:adafruit archived:false fork:true", sort="updated", order="asc")
 
-    while result.ok:
-        # repos.extend(result.json()["items"]) # uncomment and comment below, to include all forks
-        repos.extend(
-            repo
-            for repo in result.json()["items"]
-            if (
-                repo["owner"]["login"] == "adafruit"
-                and (
-                    repo["name"].startswith("Adafruit_CircuitPython")
-                    or repo["name"] == "circuitpython"
-                )
+    req_count += 1
+    print(f"req count: {req_count}")
+
+    for repo in searched_repos:
+        # print(dir(repo))
+        # print("************************")
+        # print(dir(repo.owner))
+        if (repo.owner.login == "adafruit"
+            and (
+                repo.name.startswith("Adafruit_CircuitPython")
+                or repo.name == "circuitpython"
             )
-        )
+        ):
+            repos.append(repo)
+    # while result.ok:
+    #     # repos.extend(result.json()["items"]) # uncomment and comment below, to include all forks
+    #     repos.extend(
+    #         repo
+    #         for repo in result.json()["items"]
+    #         if (
+    #             repo["owner"]["login"] == "adafruit"
+    #             and (
+    #                 repo["name"].startswith("Adafruit_CircuitPython")
+    #                 or repo["name"] == "circuitpython"
+    #             )
+    #         )
+    #     )
+    #
+    #     if result.links.get("next"):
+    #         result = gh_reqs.get(result.links["next"]["url"])
+    #         req_count += 1
+    #         print(f"req count: {req_count}")
+    #     else:
+    #         break
 
-        if result.links.get("next"):
-            result = gh_reqs.get(result.links["next"]["url"])
-        else:
-            break
-
-    repo_names = [repo["name"] for repo in repos]
+    repo_names = [repo.name for repo in repos]
 
     if "circuitpython" not in repo_names:
         core = gh_reqs.get(CORE_REPO_URL)
+        req_count += 1
+        print(f"req count: {req_count}")
         if core.ok:
             repos.append(core.json())
 
@@ -205,6 +230,8 @@ def list_repos(*, include_repos=None):
         for repo in include_repos:
             if repo not in repo_names:
                 add_repo = gh_reqs.get("/repos/adafruit/" + repo)
+                req_count += 1
+                print(f"req count: {req_count}")
                 if add_repo.ok:
                     repos.append(add_repo.json())
                 else:
@@ -249,10 +276,22 @@ def is_new_or_updated(repo):
     today_minus_seven = datetime.datetime.today() - datetime.timedelta(days=7)
 
     # first, check the latest release to see if within the last 7 days
-    result = gh_reqs.get("/repos/adafruit/" + repo["name"] + "/releases/latest")
-    if not result.ok:
+    #print(dir(repo))
+    #print(repo.releases_url)
+    #result = gh_reqs.get("/repos/adafruit/" + repo["name"] + "/releases/latest")
+
+    try:
+        latest_release = repo.get_latest_release()
+    except pygithub.GithubException:
+        print("caught unknown object 404")
         return None
-    release_info = result.json()
+
+
+    print(latest_release)
+    print("***************")
+    print(dir(latest_release))
+
+    #release_info = result.json()
     if "published_at" not in release_info:
         return None
 

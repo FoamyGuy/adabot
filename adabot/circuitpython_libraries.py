@@ -201,15 +201,17 @@ def run_library_checks(validators, kw_args, error_depth):
     logger.info("* %s active milestones", len(core_insights["milestones"]))
     for milestone, milestone_issue_count in sorted(core_insights["milestones"].items()):
         logger.info(" * %s: %s open issues", milestone, milestone_issue_count)
-    no_milestone_items = gh_reqs.get(
-        "/repos/adafruit/circuitpython/issues?milestone=none"
-    ).json()
-    no_milestone_issues = [
-        item for item in no_milestone_items if "pull_request" not in item
-    ]
+
+    core_repo = GH_INTERFACE.get_repo("adafruit/circuitpython")
+    issues = core_repo.get_issues(milestone="none")
+    no_milestone_no_pr_count = 0
+    for issue in issues:
+        if issue.pull_request is None:
+            no_milestone_no_pr_count += 1
+
     logger.info(
         " * %s issues not assigned a milestone",
-        len(no_milestone_issues),
+        len(no_milestone_no_pr_count),
     )
     logger.info("")
 
